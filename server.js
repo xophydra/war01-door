@@ -22,8 +22,7 @@ function rd(p, n) { const cap = Math.min(Math.max(Number(n) || 8192, 1), 262144)
 const tx = (p, n = 4096) => { const r = rd(p, n); return r.ok ? r.txt : '@' + (r.code || 'err'); };
 const st = p => { try { const s = fs.statSync(p); return { size: s.size, mode: (s.mode & 0o777).toString(8), dir: s.isDirectory(), uid: s.uid, gid: s.gid, dev: s.dev, ino: s.ino, mtime: s.mtimeMs }; } catch (e) { return { err: String(e.code || e.message) }; } };
 const ls = (p, n = 400) => { try { return fs.readdirSync(p).slice(0, n); } catch { return []; } };
-function walk(p, d, out) { out = out || []; if (out.length > 3000 || d < 0) return out;
-  for (const e of ls(p, 300)) { const f = p0(p, e), s = st(f); out.push(f + ' ' + JSON.stringify(s)); if (s.dir) walk(f, d - 1, out); } return out; }
+function walk(p, d, out) { out = out || []; if (out.length > 3000 || d < 0) return out; for (const e of ls(p, 300)) { const f = p0(p, e), s = st(f); out.push(f + ' ' + JSON.stringify(s)); if (s.dir) walk(f, d - 1, out); } return out; }
 function caps() { const t = tx('/proc/self/status', 12288), o = {}; let m; const re = /(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp|Threads):\s*(\S+)/g; while ((m = re.exec(t))) o[m[1]] = m[2]; return o; }
 function sfs(p) { try { const f = fs.statfsSync(p); return { type: f.type.toString(16), fs: FSM[f.type.toString(16)] || null, bsize: f.bsize, blocks: f.blocks, bfree: f.bfree, files: f.files, ffree: f.ffree }; } catch (e) { return { err: String(e.code || e.message) }; } }
 function milines(re, n) { const r = rd('/proc/self/mountinfo', 65536); if (!r.ok) return { mi: r, lines: [] }; const L = r.txt.split('\n').filter(l => re.test(l)); return { mi: { ok: 1, len: r.len }, lines: L.slice(0, n || 60), matched: L.length }; }
@@ -60,31 +59,33 @@ function gvisor(v, rel) {
   let drv = -1; try { drv = fs.readdirSync('/sys/bus').length; } catch (e) { drv = 'err:' + e.code; }
   if (/gvisor/i.test(v) || /gvisor/i.test(rel)) sig.push('version:runsc-string');
   if (!mods.ok) sig.push('modules:' + mods.code); else if (!mods.txt.trim()) sig.push('modules:empty');
-  if (sm === 0 || String(sm).startsWith('err')) sig.push('sys-module:' + sm);
+  if (sm === 0 || String(sm).startsWith('err')) sig.push('sys-module:' + sm); if (drv === 0 || String(drv).startsWith('err')) sig.push('sys-bus:' + drv);
   if (!/(overlay|ext4|btrfs|xfs)/.test(fsys)) sig.push('filesystems:no-fs-drivers');
   if (!/model name|Features/.test(ci)) sig.push('cpuinfo:no-hardware-strings');
-  if (drv === 0 || String(drv).startsWith('err')) sig.push('sys-bus:' + drv);
   const hard = sig.filter(s => !/filesystems|cpuinfo/.test(s)).length, runsc = /gvisor/i.test(v) || /gvisor/i.test(rel);
   return { verdict: runsc ? 'gvisor-runsc' : hard >= 2 ? 'likely-gvisor' : sig.length ? 'possible-gvisor' : 'looks-like-host-linux', signals: sig };
 }
 function fdp(path) { const r = { p: path }; let fd = null;
   try { fd = fs.openSync(path, 'r'); const f = fs.fstatSync(fd);
     r.mode = (f.mode & 0o170000).toString(8); r.type = f.isDirectory() ? 'dir' : f.isSocket() ? 'sock' : f.isCharacterDevice() ? 'char' : f.isBlockDevice() ? 'block' : f.isFIFO() ? 'fifo' : 'file';
-    r.rdev = f.rdev; r.size = f.size; r.uid = f.uid; r.inode = f.ino; r.st = sfs(path);
+    r.rdev = f.rdev; r.maj = f.rdev >> 8; r.min = f.rdev & 255; r.size = f.size; r.uid = f.uid; r.inode = f.ino; r.st = sfs(path); r.link = vop(() => fs.readlinkSync(path));
     r.dup = vop(() => { const d2 = fs.openSync('/proc/self/fd/' + fd, 'r'); fs.closeSync(d2); return 1; }); } catch (e) { r.open_errno = String(e.code || e.message); if (fd !== null) { try { fs.closeSync(fd); } catch {} } return r; }
   return dl(new Promise(res => { fs.read(fd, Buffer.alloc(64), 0, 64, null, (e, n, b) => res(e ? 'errno:' + e.code : { got: n, hex: b.subarray(0, n).toString('hex') })); }), 200).then(v => { r.read = v; try { fs.closeSync(fd); } catch {} return r; });
 }
 async function fdprobe(o) {
-  const out = { self_pid: process.pid, self_fd: {}, fd1: {}, scan: [], probed: [], pids: 0 };
+  const out = { self_pid: process.pid, self_fd: {}, scan: [], probed: [], pids: 0 };
   for (const e of ls('/proc/self/fd', 128)) { try { out.self_fd[e] = fs.readlinkSync('/proc/self/fd/' + e); } catch (er) { out.self_fd[e] = 'err:' + er.code; } }
   for (const pid of ls('/proc', 256).filter(x => /^[0-9]+$/.test(x)).slice(0, 64)) { out.pids++; const fdm = {}; let ln = 0;
     for (const e of ls('/proc/' + pid + '/fd', 128).slice(0, 128)) { ln++; let t = null; try { t = fs.readlinkSync('/proc/' + pid + '/fd/' + e); } catch (er) { t = 'err:' + er.code; }
-      fdm[e] = t; if (/(9p|socket|pipe|anon_inode)/.test(t)) out.scan.push({ pid: pid, fd: e, target: t }); }
+      fdm[e] = t; if (/(9p|socket|pipe|anon_inode|host:|eventfd|eventpoll)/.test(t)) out.scan.push({ pid: pid, fd: e, target: t }); }
     out['pid' + pid] = { cmd: tx('/proc/' + pid + '/cmdline', 256).replace(/\0/g, ' ').trim(), fd_count: ln, fds: fdm }; }
   const want = (o && o.p) ? String(o.p).split(',').map(x => x.trim()).filter(Boolean).slice(0, 24) : ['6', '7', '8', '9'];
-  const list = want.flatMap(f => ['/proc/self/fd/' + f, '/proc/1/fd/' + f]).concat(out.scan.slice(0, 12).map(q => '/proc/' + q.pid + '/fd/' + q.fd));
+  const dir = (o && o.d) ? String(o.d).slice(0, 200) : '/dev';
+  out.devdir = { dir: dir, stat: st(dir), fs: sfs(dir), entries: {} };
+  for (const e of ls(dir, 200)) out.devdir.entries[e] = st(p0(dir, e)); out.devcgroup = rd('/sys/fs/cgroup/devices/devices.list', 4096); const cand = (o && o.c ? String(o.c).split(',').map(x => x.trim()).filter(Boolean).slice(0, 16) : ['/dev/cuse', '/dev/fuse', '/dev/agpgart', '/dev/console', '/dev/mem', '/dev/kmem', '/dev/zero', '/opt/cuse', '/vol/B']);
+  const list = want.flatMap(f => ['/proc/self/fd/' + f, '/proc/1/fd/' + f]).concat(out.scan.slice(0, 12).map(q => '/proc/' + q.pid + '/fd/' + q.fd)).concat(ls(dir, 100).slice(0, 10).map(e => p0(dir, e)), cand);
   const t0 = Date.now();
-  for (const path of list.slice(0, 20)) { out.probed.push(await dl(fdp(path), 800)); if (Date.now() - t0 > 18000) { out.probe_budget = 'stopped at ' + out.probed.length; break; } }
+  for (const path of list.slice(0, 28)) { out.probed.push(await dl(fdp(path), 800)); if (Date.now() - t0 > 17000) { out.probe_budget = 'stopped at ' + out.probed.length; break; } }
   out.proc_mounts = rd('/proc/mounts', 32768); out.ninep = milines(/9p/, 40); return out;
 }
 function vop(p) { try { const r = p(); return r === undefined ? 1 : r; } catch (e) { return String(e.code || e.message); } }
@@ -108,8 +109,7 @@ async function info() {
     caps: caps(), hostname: os.hostname(), machine: os.type() + ' ' + os.release() + ' ' + os.machine(), arch: os.arch() + '/' + os.platform(),
     node: process.version, cpu: os.cpus().length, mem: os.totalmem(), shell: (() => { try { return fs.accessSync('/bin/sh', fs.constants.X_OK), 1; } catch { return 0; } })(),
     kernel: { version: ver, osrelease: rel, kversion: tx('/proc/sys/kernel/version', 128), modules: rd('/proc/modules', 2048), cmdline: tx('/proc/cmdline', 512), status: tx('/proc/self/status', 3072) },
-    runtime: gvisor(ver, rel), cgroup_init: tx('/proc/1/cgroup', 1024), cgroup_self: tx('/proc/self/cgroup', 512),
-    init_cmdline: tx('/proc/1/cmdline', 512), mountinfo: tx('/proc/self/mountinfo', 16384),
+    runtime: gvisor(ver, rel), cgroup_init: tx('/proc/1/cgroup', 1024), cgroup_self: tx('/proc/self/cgroup', 512), devcgroup: tx('/sys/fs/cgroup/devices/devices.list', 4096), init_cmdline: tx('/proc/1/cmdline', 512), mountinfo: tx('/proc/self/mountinfo', 16384),
     dockerenv: fs.existsSync('/.dockerenv'), docker_sock: st('/var/run/docker.sock'), resolv: tx('/etc/resolv.conf', 1024), hosts: tx('/etc/hosts', 512), osrel: tx('/etc/os-release', 512),
     env: process.env, ifaces: os.networkInterfaces(), tcp: pt };
 }
@@ -149,8 +149,7 @@ async function op(o) { o = o || {};
   return { err: 'op?' };
 }
 const dec = s => { try { return decodeURIComponent(s.replace(/\+/g, ' ')); } catch { return ''; } };
-const body = r => new Promise(res => { let s = '', n = 0; r.on('data', c => { n += c.length; if (s.length < 262144) s += c; }); r.on('end', () => res(s)); r.on('error', () => res(s)); });
-const same = (a, b) => crypto.timingSafeEqual(crypto.createHash('sha256').update(String(a)).digest(), crypto.createHash('sha256').update(String(b)).digest());
+const body = r => new Promise(res => { let s = '', n = 0; r.on('data', c => { n += c.length; if (s.length < 262144) s += c; }); r.on('end', () => res(s)); r.on('error', () => res(s)); }); const same = (a, b) => crypto.timingSafeEqual(crypto.createHash('sha256').update(String(a)).digest(), crypto.createHash('sha256').update(String(b)).digest());
 function echoObj(req, head, rawcap) { const b = Buffer.from(req.url || '', 'latin1'), s = req.socket;
   return { tls: !!s.encrypted, method: req.method, httpVersion: req.httpVersion, major: req.httpVersionMajor, minor: req.httpVersionMinor,
     url: req.url, url_len: b.length, url_hex: b.toString('hex'), url_b64: b.toString('base64'), first_line: head.split('\r\n')[0] || null,
